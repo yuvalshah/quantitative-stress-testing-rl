@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Generated data and results (recreated by the notebooks)
+data/
+results/
+backups/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,388 @@
+# Default configuration for RL-based adaptive stress testing.
+# All numeric values below are PLACEHOLDERS pending approval (see README, "Open decisions").
+
+[portfolio]
+# Starting assumption, not an optimal or recommended allocation.
+name = "us_equity_8_equal_weight"
+initial_capital = 100_000.0
+base_currency = "USD"
+policy = "long_only"                  # fully invested, unleveraged; weights must sum to 1
+weight_tolerance = 1e-8               # |sum(weights) - 1| allowed for floating-point error
+rebalancing = "daily_constant_mix"    # weights reset to target every trading day, no costs
+missing_data_policy = "complete_case" # "complete_case" (drop + report dates) or "raise"
+return_column_template = "{ticker}_return"   # Stage 2 simple adjusted-close returns
+
+[portfolio.weights]
+AAPL = 0.125
+MSFT = 0.125
+NVDA = 0.125
+JPM = 0.125
+XOM = 0.125
+JNJ = 0.125
+WMT = 0.125
+CAT = 0.125
+
+# ---------------------------------------------------------------------------
+# Stage 3: financial risk engine
+# All thresholds are illustrative project parameters, not regulatory standards.
+# ---------------------------------------------------------------------------
+[risk]
+confidence_levels = [0.95, 0.99]
+default_confidence = 0.95
+annualization_days = 252              # US equity trading days per year
+volatility_windows = [5, 20, 60]
+min_observations = 250                # fewer daily returns -> VaR/CVaR refused
+min_tail_observations = 10            # fewer expected tail points -> warning in the result
+estimation_window = "train"           # calibration window (Stage 2 split); never the test split
+report_windows = ["train", "full_sample"]   # full_sample is labelled descriptive only
+stress_horizon_days = 5
+comparison_tolerance = 1e-12          # observed >= threshold - tolerance counts as equality
+extreme_loss_dates = 10
+worst_windows = 5
+returns_path = "data/processed/features/consolidated_daily.csv"
+output_dir = "results/stage3"
+
+[[risk.limits]]
+name = "stress_loss_5d"
+metric = "cumulative_loss"
+units = "fraction_of_initial_value"
+horizon_days = 5
+threshold = 0.10
+breach_rule = ">="
+description = "Cumulative portfolio loss over a 5-trading-day stress path"
+
+[[risk.limits]]
+name = "stress_drawdown_5d"
+metric = "max_drawdown"
+units = "fraction_of_peak_value"
+horizon_days = 5
+threshold = 0.10
+breach_rule = ">="
+description = "Peak-to-trough decline within a 5-trading-day stress path"
+
+[[risk.limits]]
+name = "historical_var_95_1d"
+metric = "historical_var"
+units = "fraction_of_portfolio_value"
+horizon_days = 1
+confidence = 0.95
+threshold = 0.03
+breach_rule = ">="
+description = "1-day 95% historical VaR on the estimation window"
+
+[[risk.limits]]
+name = "historical_cvar_95_1d"
+metric = "historical_cvar"
+units = "fraction_of_portfolio_value"
+horizon_days = 1
+confidence = 0.95
+threshold = 0.06
+breach_rule = ">="
+description = "1-day 95% historical CVaR on the estimation window"
+
+[[risk.stress_scenarios]]
+name = "hypothetical_broad_selloff_5d"
+horizon_days = 5
+description = "Illustrative hypothetical 5-day returns (not historical, not a forecast)"
+[risk.stress_scenarios.shocks]
+AAPL = -0.10
+MSFT = -0.08
+NVDA = -0.15
+JPM = -0.12
+XOM = -0.06
+JNJ = -0.04
+WMT = -0.03
+CAT = -0.09
+
+[[risk.historical_replays]]
+name = "covid_crash_march_2020"
+start_date = "2020-03-09"
+horizon_days = 5
+description = "Replay of actual returns 2020-03-09 onward (example selection)"
+
+# ---------------------------------------------------------------------------
+# Stage 4: hybrid factor + residual shock model (multivariate Student-t)
+# ---------------------------------------------------------------------------
+[simulation]
+horizon_days = 5                      # steps per episode = 5-day stress limits
+seed = 42
+fit_window = "train"                  # model is fitted on this Stage 2 split only
+anchor_window = "train"               # dates whose market state starts episodes
+market_factor = "SPY_return"
+factors = ["SPY_return", "QQQ_return", "XLF_return", "XLE_return"]
+candidate_factors = ["VIX_change", "DGS10_change_bp", "WTI_return"]   # diagnostics only
+state_columns = ["VIX_close", "SPY_vol_ann_20d"]
+max_factor_sigma = 12.0               # action +/-1 = +/- this many model std devs (largest training days: 9-10.4)
+max_abs_factor_return = 0.25          # hard cap on |daily factor return|
+max_abs_stock_return = 0.60           # simulated |daily stock return| above this is rejected
+residual_mode = "sample"              # "sample" (conditional Student-t) or "mean"
+max_residual_draws = 200
+dof_grid = [2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 30.0, 50.0]
+shrinkage_method = "schafer_strimmer" # or "fixed"
+fixed_shrinkage = 0.1
+em_max_iter = 1000
+em_tol = 1e-9
+min_plausibility = 0.01               # valid breach: path no more extreme than the most extreme 1% of real training windows
+surprisal_cap = 25.0                  # per-step cap on -ln(tail probability) in the reward
+diagnostic_simulations = 50000
+output_dir = "results/stage4"
+
+[environment]
+breach_reward = 10.0                  # paid once for a valid (plausible) limit breach
+severity_weight = 5.0                 # x increase in path drawdown magnitude each step
+plausibility_penalty = 0.2            # x per-step surprisal -ln(p_t)
+magnitude_penalty = 0.5               # x mean(action^2) per step
+step_penalty = 0.01
+invalid_penalty = 5.0                 # simulator could not produce valid returns
+implausible_breach_penalty = 0.0      # charged once on an implausible breach (0 = original reward)
+implausible_breach_credit = 0.0       # kappa: implausible breach earns kappa * breach_reward * L*_t / ell (0 = original)
+terminate_on_breach = true
+
+# ---------------------------------------------------------------------------
+# Stage 5: PPO training and evaluation (stable-baselines3)
+# ---------------------------------------------------------------------------
+[training]
+algorithm = "PPO"
+policy = "MlpPolicy"
+total_timesteps = 100_000             # initial experiment budget, not a convergence guarantee
+learning_rate = 3e-4
+n_steps = 1024                        # ~200+ episodes of <= 5 steps per rollout
+batch_size = 64
+n_epochs = 10
+gamma = 0.99
+gae_lambda = 0.95
+clip_range = 0.2
+ent_coef = 0.0
+vf_coef = 0.5
+max_grad_norm = 0.5
+log_std_init = -1.0                   # initial action std 0.37 (~4.4 sigma); SB3 default 0 = 12 sigma
+net_arch = [64, 64]
+normalize_observations = true         # VecNormalize on observations only (rewards unchanged)
+seeds = [0, 1, 2]
+device = "cpu"
+torch_threads = 1
+eval_freq = 10_000                    # timesteps between checkpoint-selection evaluations
+checkpoint_freq = 25_000
+selection_episodes = 200              # validation-anchor episodes used ONLY for checkpoint selection
+selection_seed = 10_000
+validation_episodes = 500             # per validation evaluation set (reporting)
+eval_seed_sets = [20_000, 30_000, 40_000]
+random_baseline_seed_offset = 7_777   # action RNG offset for the random baseline
+test_episodes = 500
+test_seed = 90_000
+plausibility_thresholds = [0.005, 0.01, 0.02]
+scripted_action = -0.15               # Stage 4 moderate decline (chosen on training anchors)
+n_representative_scenarios = 3
+output_dir = "results/stage5"
+
+[recommendation]
+severity_weight = 0.5
+plausibility_weight = 0.3
+relevance_weight = 0.2
+top_k = 10
+
+[mitigation]
+strategies = ["reduce_exposure", "rebalance_min_variance", "increase_cash", "duration_hedge"]
+max_turnover = 0.30            # max fraction of portfolio traded by one mitigation
+transaction_cost_bps = 5.0
+
+[storage]
+scenario_dir = "results/scenarios"
+
+# ---------------------------------------------------------------------------
+# Stage 2: data collection, cleaning, preprocessing and feature engineering
+# ---------------------------------------------------------------------------
+[data]
+start_date = "2015-01-01"
+end_date = "2025-12-31"        # inclusive; loaders add one day for exclusive-end APIs
+interval = "1d"
+primary_return = "simple"      # simple returns are primary; log returns optional features
+seed = 42
+force_refresh = false          # true = re-download and archive existing raw files
+
+[data.paths]
+raw_dir = "data/raw"
+processed_dir = "data/processed"
+reports_dir = "data/reports"
+
+[data.yahoo]
+auto_adjust = false            # keep raw (split-adjusted) Close and dividend+split Adj Close
+actions = true                 # include Dividends and Stock Splits columns
+max_retries = 3
+retry_backoff_seconds = 2.0
+pause_seconds = 0.5            # pause between tickers to limit rate-limiting
+
+[data.fred]
+api_key_env = "FRED_API_KEY"
+api_url = "https://api.stlouisfed.org/fred/series/observations"
+series_info_url = "https://api.stlouisfed.org/fred/series"
+public_csv_url = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+allow_public_csv_fallback = false   # true = use keyless fredgraph CSV when no API key is set
+max_retries = 3
+retry_backoff_seconds = 2.0
+timeout_seconds = 30.0
+
+[data.cleaning]
+conflict_policy = "drop"       # conflicting duplicate dates: "drop" (set missing + report) or "raise"
+max_gap_calendar_days = 5      # returns/changes across longer gaps between observations are undefined
+partial_coverage_tolerance_days = 10
+extreme_return_threshold = 0.15      # |daily return| above this is flagged (never removed)
+extreme_change_bp_threshold = 50.0   # |daily yield/rate change| above this is flagged
+yield_min_pct = -1.0           # rates outside [min, max] are flagged as suspicious
+yield_max_pct = 25.0
+macro_ffill_limit = 0          # 0 = no forward fill of macro levels in the consolidated dataset
+
+[data.features]
+windows = [5, 20, 60]          # trading-day rolling windows
+min_obs_fraction = 0.8         # min valid observations per window = ceil(fraction * window)
+annualization_days = 252
+correlation_windows = [20, 60]
+drawdown_windows = [60]
+include_log_returns = true
+regime_source = "VIX_close"
+regime_quantiles = [0.25, 0.75]      # fitted on the training split only
+regime_labels = ["low", "normal", "high"]
+
+[data.features.correlation_pairs]
+AAPL = ["SPY", "QQQ"]
+MSFT = ["SPY", "QQQ"]
+NVDA = ["SPY", "QQQ"]
+JPM = ["SPY", "XLF"]
+XOM = ["SPY", "XLE"]
+JNJ = ["SPY"]
+WMT = ["SPY"]
+CAT = ["SPY", "XLI"]           # XLI pair used only if the XLI asset below is enabled
+
+[data.splits]
+train = ["2015-01-01", "2021-12-31"]
+validation = ["2022-01-01", "2023-12-31"]
+test = ["2024-01-01", "2025-12-31"]
+
+[[data.assets]]
+symbol = "AAPL"
+alias = "AAPL"
+name = "Apple"
+group = "stock"
+sector = "Technology"
+role = "Consumer technology exposure"
+
+[[data.assets]]
+symbol = "MSFT"
+alias = "MSFT"
+name = "Microsoft"
+group = "stock"
+sector = "Technology"
+role = "Software and cloud exposure"
+
+[[data.assets]]
+symbol = "NVDA"
+alias = "NVDA"
+name = "NVIDIA"
+group = "stock"
+sector = "Semiconductors"
+role = "Semiconductor and growth-stock exposure"
+
+[[data.assets]]
+symbol = "JPM"
+alias = "JPM"
+name = "JPMorgan Chase"
+group = "stock"
+sector = "Financials"
+role = "Banking and interest-rate exposure"
+
+[[data.assets]]
+symbol = "XOM"
+alias = "XOM"
+name = "Exxon Mobil"
+group = "stock"
+sector = "Energy"
+role = "Energy and oil-price exposure"
+
+[[data.assets]]
+symbol = "JNJ"
+alias = "JNJ"
+name = "Johnson & Johnson"
+group = "stock"
+sector = "Healthcare"
+role = "Healthcare exposure"
+
+[[data.assets]]
+symbol = "WMT"
+alias = "WMT"
+name = "Walmart"
+group = "stock"
+sector = "Consumer staples / retail"
+role = "Consumer and defensive-retail exposure"
+
+[[data.assets]]
+symbol = "CAT"
+alias = "CAT"
+name = "Caterpillar"
+group = "stock"
+sector = "Industrials"
+role = "Industrial and economic-cycle exposure"
+
+[[data.assets]]
+symbol = "SPY"
+alias = "SPY"
+name = "SPDR S&P 500 ETF"
+group = "market_indicator"
+role = "S&P 500 / broad US equity market"
+
+[[data.assets]]
+symbol = "QQQ"
+alias = "QQQ"
+name = "Invesco QQQ Trust"
+group = "market_indicator"
+role = "Nasdaq-100 / technology-heavy market"
+
+[[data.assets]]
+symbol = "XLF"
+alias = "XLF"
+name = "Financial Select Sector SPDR"
+group = "market_indicator"
+role = "Financial-sector indicator"
+
+[[data.assets]]
+symbol = "XLE"
+alias = "XLE"
+name = "Energy Select Sector SPDR"
+group = "market_indicator"
+role = "Energy-sector indicator"
+
+[[data.assets]]
+symbol = "XLI"
+alias = "XLI"
+name = "Industrial Select Sector SPDR"
+group = "market_indicator"
+role = "Optional industrial-sector indicator for CAT"
+required = false
+enabled = false
+
+[[data.assets]]
+symbol = "^VIX"
+alias = "VIX"
+name = "CBOE Volatility Index"
+group = "volatility"
+role = "Implied volatility of S&P 500 options (not realised portfolio volatility)"
+
+[[data.macro]]
+series_id = "DGS10"
+alias = "DGS10"
+name = "Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity"
+kind = "yield"
+unit = "percent"
+
+[[data.macro]]
+series_id = "DFF"
+alias = "DFF"
+name = "Federal Funds Effective Rate"
+kind = "rate"
+unit = "percent"
+
+[[data.macro]]
+series_id = "DCOILWTICO"
+alias = "WTI"
+name = "Crude Oil Prices: West Texas Intermediate (WTI) - Cushing, Oklahoma"
+kind = "price"
+unit = "usd_per_barrel"

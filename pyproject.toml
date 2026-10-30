@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlstress"
+version = "0.1.0"
+description = "RL-based adaptive stress testing with a portfolio-specific scenario recommendation system."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Yuval Shah" }, { name = "Vedant Pandey" }, { name = "Riddhima Shah" }, { name = "Tushar Varshney" }]
+# Core = what Stages 2-4 need. Later-stage stacks are optional extras.
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "yfinance>=0.2.54",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+    "matplotlib>=3.8",
+    "scipy>=1.11",   # Student-t / F / gamma distributions (Stage 4)
+]
+
+[project.urls]
+Repository = "https://github.com/yuvalshah/RS-RL"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+ml = ["scikit-learn>=1.4"]
+rl = ["gymnasium>=0.29", "stable-baselines3>=2.3"]
+dashboard = ["streamlit>=1.32", "plotly>=5.18"]
+
+[project.scripts]
+rlstress-data = "rlstress.data.pipeline:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+# Observation box is intentionally unbounded (returns, surprisal).
+filterwarnings = ["ignore:.*Box observation space (minimum|maximum) value is.*:UserWarning"]
