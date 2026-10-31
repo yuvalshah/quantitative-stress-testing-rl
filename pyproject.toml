@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/yuvalshah/RS-RL"
+Repository = "https://github.com/yuvalshah/quantitative-stress-testing-rl"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]

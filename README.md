@@ -1,4 +1,6 @@
-# RS-RL: Reinforcement-Learning Stress Testing with a Portfolio-Aware Scenario Recommender
+# Quantitative Stress Testing using Reinforcement Learning
+
+*Finding plausible market crashes that break a portfolio's risk limits, with a portfolio-aware scenario recommender.*
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Gymnasium](https://img.shields.io/badge/env-Gymnasium-0f766e)
@@ -348,7 +350,7 @@ assets/                    figures used in this README
 ## Getting started
 
 ```bash
-git clone https://github.com/yuvalshah/RS-RL.git && cd RS-RL
+git clone https://github.com/yuvalshah/quantitative-stress-testing-rl.git && cd quantitative-stress-testing-rl
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,rl]"
 
