@@ -17,7 +17,7 @@ The paths the agents find are de-duplicated into a validated **scenario library*
 then picks a short, diverse shortlist with an explanation for each pick. A frozen version of the whole pipeline was
 tested once on held-out 2024–2025 data.
 
-**Authors:** [Yuval Shah](https://github.com/yuvalshah) · Vedant Pandey · Riddhima Shah · Tushar Varshney
+**Authors:** [Yuval Shah](https://github.com/yuvalshah) · Vedant Pandey · [Riddhima Shah](https://github.com/Riddssss) · [Tushar Varshney](https://github.com/tusharv2005)
 
 ---
 
